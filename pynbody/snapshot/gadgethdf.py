@@ -23,16 +23,20 @@ be loaded.
 
   # for py2.5
 
+from .. import util, halo
+from .. import family
+from .. import units
+from .. import config_parser
+from . import SimSnap
+
 import configparser
-import functools
-import itertools
-import logging
-import warnings
 
 import numpy as np
+import functools, itertools
+import warnings
 
-from .. import config_parser, family, halo, units, util
-from . import SimSnap, namemapper
+import logging
+from . import namemapper
 
 logger = logging.getLogger('pynbody.snapshot.gadgethdf')
 
@@ -76,7 +80,7 @@ class DummyHDFData:
         target[:] = self.value
 
 
-class GadgetHdfMultiFileManager:
+class GadgetHdfMultiFileManager :
     _nfiles_groupname = "Header"
     _nfiles_attrname = "NumFilesPerSnapshot"
     _subgroup_name = None
@@ -102,10 +106,10 @@ class GadgetHdfMultiFileManager:
 
             yield self._open_files[i]
 
-    def __getitem__(self, i) :
-        try :
+    def __getitem__(self, i) : 
+        try : 
             return self._open_files[i]
-        except KeyError :
+        except KeyError : 
             self._open_files[i] = next(itertools.islice(self,i,i+1))
             return self._open_files[i]
 
@@ -114,9 +118,9 @@ class GadgetHdfMultiFileManager:
 
     def get_parameter_attrs(self):
         try:
-            attrs = self[0].parent['Parameters'].attrs
+           attrs = self[0].parent['Parameters'].attrs 
         except KeyError:
-            attrs = []
+           attrs = []
 
         if len(attrs) == 0:
             return self.get_header_attrs()
@@ -146,7 +150,7 @@ class SubfindHdfMultiFileManager(GadgetHdfMultiFileManager):
     _nfiles_attrname = "NTask"
     _subgroup_name = "FOF"
 
-
+    
 class GadgetHDFSnap(SimSnap):
     """
     Class that reads HDF Gadget data
@@ -157,7 +161,7 @@ class GadgetHDFSnap(SimSnap):
     _size_from_hdf5_key = "ParticleIDs"
 
     def __init__(self, filename, ):
-        super().__init__()
+        super(GadgetHDFSnap, self).__init__()
 
         self._filename = filename
 
@@ -215,8 +219,8 @@ class GadgetHDFSnap(SimSnap):
         for hdf_family_name in self._family_to_group_map[fam]:
             for hdf in self._hdf_files:
                 if hdf_family_name in hdf:
-                    if self._size_from_hdf5_key in hdf[hdf_family_name]:
-                        yield hdf[hdf_family_name]
+                    if (self._size_from_hdf5_key in hdf[hdf_family_name]) or ('TracerID' in hdf[hdf_family_name]):
+                         yield hdf[hdf_family_name]
 
     def __init_file_map(self):
         family_slice_start = 0
@@ -226,7 +230,10 @@ class GadgetHDFSnap(SimSnap):
         for fam in all_families_sorted:
             family_length = 0
             for hdf_group in self._all_hdf_groups_in_family(fam):
-                family_length += hdf_group[self._size_from_hdf5_key].size
+                try:
+                    family_length += hdf_group[self._size_from_hdf5_key].size
+                except KeyError:
+                    family_length += hdf_group['TracerID'].size
 
             self._family_slice[fam] = slice(family_slice_start, family_slice_start + family_length)
             family_slice_start += family_length
@@ -239,9 +246,14 @@ class GadgetHDFSnap(SimSnap):
         arrays. This routine decides in advance the correct dtype to assign to the mass array, whichever
         particle type it is loaded for."""
         mass_dtype = np.float64
+        #print('Out : ', mass_dtype)
         for hdf in self._all_hdf_groups():
+            #print(hdf)
             if "Coordinates" in hdf:
                 mass_dtype = hdf['Coordinates'].dtype
+                #mass_dtype = np.float64
+        mass_dtype = np.float64
+        #print('After : ', mass_dtype)
         self._mass_dtype = mass_dtype
 
     def _families_ordered(self):
@@ -285,7 +297,7 @@ class GadgetHDFSnap(SimSnap):
         else:
             return self._loadable_family_keys[fam]
 
-
+        
     @staticmethod
     def _write(self, filename=None):
         raise RuntimeError("Not implemented")
@@ -332,7 +344,7 @@ class GadgetHDFSnap(SimSnap):
 
     def _get_or_create_hdf_dataset(self, particle_group, hdf_name, shape, dtype):
         if self._translate_array_name(hdf_name,reverse=True)=='mass':
-            raise OSError("Unable to write the mass block due to Gadget header format")
+            raise IOError("Unable to write the mass block due to Gadget header format")
 
         ret = particle_group
         for tpart in hdf_name.split("/")[:-1]:
@@ -365,9 +377,8 @@ class GadgetHDFSnap(SimSnap):
     def _get_cosmo_factors(hdf, arr_name) :
         """Return the cosmological factors for a given array"""
         match = [s for s in GadgetHDFSnap._get_hdf_allarray_keys(hdf) if ((s.endswith("/"+arr_name)) & ('PartType' in s))]
-        if (arr_name == 'Mass' or arr_name == 'Masses') and len(match) == 0:
+        if arr_name == 'Mass' and len(match) == 0:
             # mass stored in header. We're out in the cold on our own.
-            warnings.warn("Masses are either stored in the header or have another dataset name; assuming the cosmological factor %s" % units.h**-1)
             return units.Unit('1.0'), units.h**-1
         if len(match) > 0 :
             try:
@@ -381,11 +392,15 @@ class GadgetHDFSnap(SimSnap):
                 # gadget4 <sigh>
                 hexp = hdf[match[0]].attrs['h_scaling']
             return units.a**util.fractions.Fraction.from_float(float(aexp)).limit_denominator(), units.h**util.fractions.Fraction.from_float(float(hexp)).limit_denominator()
-        else :
+        else : 
             return units.Unit('1.0'), units.Unit('1.0')
+
 
     def _get_units_from_hdf_attr(self, hdfattrs) :
         """Return the units based on HDF attributes VarDescription"""
+
+
+
         VarDescription = str(hdfattrs['VarDescription'])
         CGSConversionFactor = float(hdfattrs['CGSConversionFactor'])
         aexp = hdfattrs['aexp-scale-exponent']
@@ -395,9 +410,9 @@ class GadgetHDFSnap(SimSnap):
 
         if not np.allclose(aexp, 0.0):
             arr_units *= (units.a)**util.fractions.Fraction.from_float(float(aexp)).limit_denominator()
-        if not np.allclose(hexp, 0.0):
+        if not np.allclose(hexp, 0.0):    
             arr_units *= (units.h)**util.fractions.Fraction.from_float(float(hexp)).limit_denominator()
-
+  
         return arr_units
 
     def _get_units_from_description(self, description, expectedCgsConversionFactor=None):
@@ -432,14 +447,14 @@ class GadgetHDFSnap(SimSnap):
         if expectedCgsConversionFactor is not None:
             if not np.allclose(conversion, expectedCgsConversionFactor, rtol=1e-3):
                 raise units.UnitsException(
-                    "Error with unit read out from HDF. Inferred CGS conversion factor is {!r} but HDF requires {!r}".format(
+                    "Error with unit read out from HDF. Inferred CGS conversion factor is %r but HDF requires %r" % (
                     conversion, expectedCgsConversionFactor))
 
         return arr_units
 
     def _load_array(self, array_name, fam=None):
         if not self._family_has_loadable_array(fam, array_name):
-            raise OSError("No such array on disk")
+            raise IOError("No such array on disk")
         else:
 
             translated_name = self._translate_array_name(array_name)
@@ -462,7 +477,10 @@ class GadgetHDFSnap(SimSnap):
             for loading_fam in all_fams_to_load:
                 i0 = 0
                 for hdf in self._all_hdf_groups_in_family(loading_fam):
-                    npart = hdf['ParticleIDs'].size
+                    try:
+                        npart = hdf['ParticleIDs'].size
+                    except KeyError:
+                        npart = hdf['TracerID'].size
                     i1 = i0+npart
 
                     dataset = self._get_hdf_dataset(hdf, translated_name)
@@ -510,14 +528,25 @@ class GadgetHDFSnap(SimSnap):
         # Some versions of gadget fold the 3D arrays into 1D.
         # So check if the dimensions make sense -- if not, assume we're looking at an array that
         # is 3D and cross your fingers
-        npart = len(representative_hdf[self._family_to_group_map[fam][0]]['ParticleIDs'])
+        try:
+            npart = len(representative_hdf[self._family_to_group_map[fam][0]]['ParticleIDs'])
+        except KeyError:
+            npart = len(representative_hdf[self._family_to_group_map[fam][0]]['TracerID'])
 
         if len(representative_dset) != npart:
             dy = len(representative_dset) // npart
 
         dtype = representative_dset.dtype
+
+        
+        #print('REP DISET : ', representative_dset, dtype)
         if translated_name=="Mass":
             dtype = self._mass_dtype
+        if translated_name in ['Masses', 'Mass', 'Coordinates', 'Velocities', 'Density', 'GFM_Metallicity', 'GFM_StellarFormationTime']:
+            dtype = np.float64
+        #if translated_name in ['Coordinates']:
+        #     dtype = np.float32
+        #print('COSA DESPUES : ', dtype)
         return dtype, dy, inferred_units
 
     def __init_unit_information(self):
@@ -527,13 +556,8 @@ class GadgetHDFSnap(SimSnap):
             # Gadget 4 stores unit information in Parameters attr <sigh>
             atr = self._hdf_files.get_parameter_attrs()
             if 'UnitVelocity_in_cm_per_s' not in atr.keys():
-                warnings.warn("No unit information found in GadgetHDF file. Using gadget default units.", RuntimeWarning)
-                vel_unit = config_parser.get('gadget-units', 'vel')
-                dist_unit = config_parser.get('gadget-units', 'pos')
-                mass_unit = config_parser.get('gadget-units', 'mass')
-                self._file_units_system = [units.Unit(x) for x in [
-                    vel_unit, dist_unit, mass_unit, "K"]]
-                return
+                warnings.warn("No unit information found in GadgetHDF file", RuntimeWarning)
+                return {},{}
 
         # Define the SubFind units, we will parse the attribute VarDescriptions for these
         vel_unit = atr['UnitVelocity_in_cm_per_s'] * units.cm / units.s
@@ -548,33 +572,20 @@ class GadgetHDFSnap(SimSnap):
         # Create a dictionary for the units, this will come in handy later
         unitvar = {'U_V': vel_unit, 'U_L': dist_unit, 'U_M': mass_unit,
                    'U_T': time_unit, '[K]': units.K,
-                   'SEC_PER_YEAR': units.yr, 'SOLAR_MASS': units.Msol,
-                   'solar masses / yr': units.Msol/units.yr, 'BH smoothing': dist_unit}
-        # Some arrays like StarFormationRate don't follow the patter of U_ units
+                   'SEC_PER_YEAR': units.yr, 'SOLAR_MASS': units.Msol}
+        # Last two units are to catch occasional arrays like StarFormationRate which don't
+        # follow the patter of U_ units unfortunately
         cgsvar = {'U_M': 'g', 'SOLAR_MASS': 'g', 'U_T': 's',
-                  'SEC_PER_YEAR': 's', 'U_V': 'cm s**-1', 'U_L': 'cm', '[K]': 'K',
-                  'solar masses / yr': 'g s**-1', 'BH smoothing': 'cm'}
+                  'SEC_PER_YEAR': 's', 'U_V': 'cm s**-1', 'U_L': 'cm', '[K]': 'K'}
 
         self._hdf_cgsvar = cgsvar
         self._hdf_unitvar = unitvar
 
         cosmo = 'HubbleParam' in list(self._get_hdf_parameter_attrs().keys())
         if cosmo:
-            try:
-                for fac in self._get_cosmo_factors(self._hdf_files[0], 'Coordinates'): dist_unit *= fac
-            except KeyError:
-                dist_unit *= units.a * units.h**-1
-                warnings.warn("Unable to find cosmological factors in HDF file; assuming position is %s" % dist_unit)
-            try:
-                for fac in self._get_cosmo_factors(self._hdf_files[0], 'Velocities'): vel_unit *= fac
-            except KeyError:
-                vel_unit *= units.a**(1,2)
-                warnings.warn("Unable to find cosmological factors in HDF file; assuming velocity is %s" % vel_unit)
-            try:
-                for fac in self._get_cosmo_factors(self._hdf_files[0], 'Mass'): mass_unit *= fac
-            except KeyError:
-                mass_unit *= units.h**-1
-                warnings.warn("Unable to find cosmological factors in HDF file; assuming mass is %s" % mass_unit)
+            for fac in self._get_cosmo_factors(self._hdf_files[0], 'Coordinates'): dist_unit *= fac
+            for fac in self._get_cosmo_factors(self._hdf_files[0], 'Velocities'): vel_unit *= fac
+            for fac in self._get_cosmo_factors(self._hdf_files[0], 'Mass'): mass_unit *= fac
 
         self._file_units_system = [units.Unit(x) for x in [
             vel_unit, dist_unit, mass_unit, "K"]]
@@ -652,7 +663,7 @@ def do_properties(sim):
 # SubFindHDF class
 ###################
 
-class SubFindHDFSnap(GadgetHDFSnap) :
+class SubFindHDFSnap(GadgetHDFSnap) : 
     """
     Class to read Gadget's SubFind HDF data
     """
@@ -660,9 +671,9 @@ class SubFindHDFSnap(GadgetHDFSnap) :
     _readable_hdf5_test_key = "FOF"
 
     def __init__(self, filename) :
-        super().__init__(filename)
+        super(SubFindHDFSnap,self).__init__(filename)
 
-    def halos(self) :
+    def halos(self) : 
         return halo.SubFindHDFHaloCatalogue(self)
 
 
@@ -688,14 +699,192 @@ class EagleLikeHDFSnap(GadgetHDFSnap):
         else:
             return halo.GrpCatalogue(self, array="GroupNumber", ignore=np.max(self['GroupNumber']))
 
+############
+# MOD: Here I am going to add my new things :)
+############
+
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def HU_mag(self):
+    return self['GFM_StellarPhotometrics'][:, 0]
+
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def HB_mag(self):
+    return self['GFM_StellarPhotometrics'][:, 1]
+
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def HV_mag(self):
+    return self['GFM_StellarPhotometrics'][:, 2]
+
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def HK_mag(self):
+    return self['GFM_StellarPhotometrics'][:, 3]
+
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def Hg_mag(self):
+    return self['GFM_StellarPhotometrics'][:, 4]
+
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def Hr_mag(self):
+    return self['GFM_StellarPhotometrics'][:, 5]
+
+
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def Hi_mag(self):
+    return self['GFM_StellarPhotometrics'][:, 6]
+
+
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def Hz_mag(self):
+    return self['GFM_StellarPhotometrics'][:, 7]
+
+
+
+# Metals:
+#  H, He, C, N, O, Ne, Mg, Si, Fe, Y, Sr, Zr, Ba, Pb
+ 
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def hydrogen(self) :
+    return self['GFM_Metals'][:, 0]
+
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def hetot(self) :
+    return self['GFM_Metals'][:, 1]
+
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def C(self) :
+    return self['GFM_Metals'][:, 2]
+
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def N(self) :
+    return self['GFM_Metals'][:, 3]
+
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def O(self) :
+    return self['GFM_Metals'][:, 4]
+
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def Ne(self) :
+    return self['GFM_Metals'][:, 5]
+
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def Mg(self) :
+    return self['GFM_Metals'][:, 6]
+    
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def Si(self) :
+    return self['GFM_Metals'][:, 7]
+
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def Fe(self) :
+    return self['GFM_Metals'][:, 8]
+
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def Y(self) :
+    return self['GFM_Metals'][:, 9]
+
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def Sr(self) :
+    return self['GFM_Metals'][:, 10]
+
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def Zr(self) :
+    return self['GFM_Metals'][:, 11]
+
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def Ba(self) :
+    return self['GFM_Metals'][:, 12]
+
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def Pb(self) :
+    return self['GFM_Metals'][:, 13]
+
+
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def ne(sim) :
+    # MOD
+    """Number of electrons per proton mass, ignoring the contribution from He!"""
+  
+    # the electron abundance is relativ to the hydrogen abundance 
+    ne = sim['ElectronAbundance'] * sim['hydrogen']
+    #ne.units = units.m_p**-1
+
+    return ne
+
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def mu(self) :
+    """mean molecular mass relative to proton mass"""
+
+    """
+    # Eso es lo que me gustaria hacer
+    # Metals followed by pynbody:
+    #  H, He, C, N, O, Ne, Mg, Si, Fe, Y, Sr, Zr, Ba, Pb
+
+    # atomic masses:
+    AA = np.array([1 , 4,  12, 14, 16, 20.18, 24.31, 28.09, 55.85, 88.91, 87.62, 91.22, 137.33, 207.2])
+    Ae = np.array([5.4858e-4]) # masa del electron en uma
+
+    XX_atm = np.sum(self['GFM_Metals']/AA, axis=1)
+    XX_e = (1 - np.sum(self['GFM_metals'], axis=1))/Ae
+
+    return (XX_e + XX_atm)**-1
+
+    """
+
+    mu = 4 / (1 + self['hydrogen']*(3 + 4*self['ElectronAbundance']))
+    mu.units = units.Unit("1")
+    return mu
+
+
+@GadgetHDFSnap.derived_quantity
+@SubFindHDFSnap.derived_quantity
+def temp(self):
+    """Gas temperature derived from internal energy"""
+    gamma = 5. / 3
+
+    temp = (self['u'] * units.m_p / units.k) * (self['mu'] * (gamma - 1))
+    temp.convert_units("K")
+    #print(temp.units("K"))
+    return temp
+
+
+#############
+# END
+##############
+
+
 ## Gadget has internal energy variable
 @GadgetHDFSnap.derived_quantity
 @SubFindHDFSnap.derived_quantity
 def u(self) :
     """Gas internal energy derived from snapshot variable or temperature"""
-    try:
-        u = self['InternalEnergy']
+    try:    
+        u = self['InternalEnergy']        
     except KeyError:
+        #print('Caluclating')
         gamma = 5./3
         u = self['temp']*units.k/(self['mu']*units.m_p*(gamma-1))
 
@@ -731,14 +920,7 @@ def HeIII(sim) :
 
     return sim.g["hetot"] - sim.g["HeII"] - sim.g["HeI"]
 
-@GadgetHDFSnap.derived_quantity
-@SubFindHDFSnap.derived_quantity
-def ne(sim) :
-    """Number of electrons per proton mass, ignoring the contribution from He!"""
-    ne = sim.g["HII"]  #+ sim["HeII"] + 2*sim["HeIII"]
-    ne.units = units.m_p**-1
 
-    return ne
 
 @GadgetHDFSnap.derived_quantity
 @SubFindHDFSnap.derived_quantity
@@ -752,7 +934,7 @@ def rho_ne(sim) :
 def dm(sim) :
     """Dispersion measure per SPH particle currently ignoring n_e contribution from He """
 
-    return sim.g["rho_ne"]
+    return sim.g["rho_ne"] 
 
 @GadgetHDFSnap.derived_quantity
 @SubFindHDFSnap.derived_quantity
@@ -772,7 +954,7 @@ def redshift(sim) :
 def doppler_redshift(sim) :
     """Doppler Redshift from LoS Velocity 'losvel' using SR """
 
-    return np.sqrt( (1. + sim['losvel'].in_units('c')) / (1. - sim['losvel'].in_units('c'))  ) - 1.
+    return np.sqrt( (1. + sim['losvel'].in_units('c')) / (1. - sim['losvel'].in_units('c'))  ) - 1. 
 
 @GadgetHDFSnap.derived_quantity
 @SubFindHDFSnap.derived_quantity
@@ -786,16 +968,16 @@ def em(sim) :
 def halpha(sim) :
     """H alpha intensity (based on Emission Measure n_e^2) per particle to be integrated along LoS"""
 
-    ## Rate at which recombining electrons and protons produce Halpha photons.
-    ## Case B recombination assumed from Draine (2011)
+    ## Rate at which recombining electrons and protons produce Halpha photons. 
+    ## Case B recombination assumed from Draine (2011)    
     #alpha = 2.54e-13 * (sim.g['temp'].in_units('K') / 1e4)**(-0.8163-0.0208*np.log(sim.g['temp'].in_units('K') / 1e4))
     #alpha.units = units.cm**(3) * units.s**(-1)
 
-    ## H alpha intensity = coeff * EM
+    ## H alpha intensity = coeff * EM 
     ## where coeff is h (c / Lambda_Halpha) / 4Pi) and EM is int rho_e * rho_p * alpha
     ## alpha = 7.864e-14 T_1e4K from http://astro.berkeley.edu/~ay216/08/NOTES/Lecture08-08.pdf
     coeff = (6.6260755e-27) * (299792458. / 656.281e-9) / (4.*np.pi) ## units are erg sr^-1
-    alpha = coeff * 7.864e-14 * (1e4 / sim.g['temp'].in_units('K'))
+    alpha = coeff * 7.864e-14 * (1e4 / sim.g['temp'].in_units('K')) 
 
     alpha.units = units.erg * units.cm**(3) * units.s**(-1) * units.sr**(-1) ## It's intensity in erg cm^3 s^-1 sr^-1
 
@@ -814,15 +996,6 @@ def c_n_sq(sim) :
 
     return c_n_sq
 
-@GadgetHDFSnap.derived_quantity
-@SubFindHDFSnap.derived_quantity
-def hetot(self) :
-    return self["He"]
-
-@GadgetHDFSnap.derived_quantity
-@SubFindHDFSnap.derived_quantity
-def hydrogen(self) :
-    return self["H"]
 
 ## Need to use the ionisation fraction calculation here which gives ionisation fraction
 ## based on the gas temperature, density and redshift for a CLOUDY table
@@ -850,7 +1023,7 @@ def HIeos(sim) :
 ## Need to use the ionisation fraction calculation here which gives ionisation fraction
 ## based on the gas temperature, density and redshift for a CLOUDY table, then applying
 ## selfshielding for the dense, star forming gas on the equation of state AND a further
-## pressure based limit for
+## pressure based limit for 
 @GadgetHDFSnap.derived_quantity
 @SubFindHDFSnap.derived_quantity
 def HID12(sim) :
@@ -982,7 +1155,7 @@ def mgxh(self) :
     self['Mg'][np.where(self['Mg'] == 0)]=minmg
     return np.log10(self['Mg']/self['Mg']) - np.log10(XSOLMg/XSOLH)
 
-@GadgetHDFSnap.derived_quantity
+@GadgetHDFSnap.derived_quantity    
 @SubFindHDFSnap.derived_quantity
 def oxh(self) :
     minox = np.amin(self['O'][np.where(self['O'] > 0)])
