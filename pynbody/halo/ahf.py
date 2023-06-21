@@ -457,16 +457,23 @@ class AHFCatalogue(HaloCatalogue):
         ID2index = {}
         for i, halo in self._halos.items():
             # If the "ID" property doesn't exist, use pynbody's internal index
-            id = halo.properties.get("ID", i)
+            id = int(halo.properties.get("ID", i) %  1e12) # SCB: update
             ID2index[id] = i
 
         line = f.readline()
         while line:
             try:
+                # SCB : updates
+                # For some reashon the subestructure file do not uses the big ids of hestia
+                # That's why a get the remainder of the id in line 460
+                # Also it uses ordered indexes zstaritning in 0. While in pynbody the indexes 
+                # start in one. So I have aded one in lines 472 and 477
                 haloid, _nsubhalos = (int(x) for x in line.split())
+                haloid += 1 # SCB: update
                 halo_index = ID2index[haloid]
+                
                 children = [
-                    ID2index[int(x)] for x in f.readline().split()
+                    ID2index[int(x)+1] for x in f.readline().split() # SCB: update
                 ]
             except ValueError:
                 logger.error(
